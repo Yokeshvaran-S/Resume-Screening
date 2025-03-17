@@ -1,101 +1,136 @@
 import streamlit as st
+import nltk
+import re
 from PyPDF2 import PdfReader
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import time
+import pandas as pd
+import base64
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Function to extract text from PDF
+# Download NLP models
+nltk.download('stopwords')
+
+
 def extract_text_from_pdf(file):
+    """Extracts text from a PDF file."""
     pdf = PdfReader(file)
-    text = ""
-    for page in pdf.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
+    text = "".join(page.extract_text() or "" for page in pdf.pages)
     return text.strip() if text else "No readable text found."
 
-# Function to rank resumes based on similarity to job role, experience, and required skills
-def rank_resumes(job_role, experience_level, required_skills, resumes):
-    job_criteria = job_role + " " + experience_level + " " + " ".join(required_skills)
-    documents = [job_criteria] + resumes
+
+def rank_resumes(job_description, resumes):
+    """Ranks resumes based on their similarity to the job description."""
+    documents = [job_description] + resumes
     vectorizer = TfidfVectorizer().fit_transform(documents)
     vectors = vectorizer.toarray()
-    
-    job_vector = vectors[0]
+    job_desc_vector = vectors[0]
     resume_vectors = vectors[1:]
-    cosine_similarities = cosine_similarity([job_vector], resume_vectors).flatten()
-    
-    return cosine_similarities
+    return cosine_similarity([job_desc_vector], resume_vectors).flatten()
 
-# ----- Streamlit UI -----
-st.set_page_config(page_title="AI Resume Screening", page_icon="📄", layout="wide")
 
-# Custom CSS for better UI
-st.markdown(
-    """
-    <style>
-        .big-font { font-size: 24px !important; font-weight: bold; }
-        .stButton > button { width: 100%; border-radius: 10px; }
-        .stFileUploader { border: 2px solid #4CAF50; padding: 10px; border-radius: 10px; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+def extract_candidate_details(resume_text):
+    """Extracts candidate name, email, and phone number from resume text."""
+    lines = resume_text.split("\n")
+    name = lines[0].replace("Name:",
+                            "").strip() if lines else "Unknown Candidate"
+    email = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+                      resume_text)
+    phone = re.search(r'\b\d{10}\b', resume_text)  # Matches 10-digit numbers
+    return name, email.group(0) if email else "N/A", phone.group(
+        0) if phone else "N/A"
 
-# Sidebar Navigation
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3281/3281323.png", width=100)
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["📂 Client Uploads", "📊 Interviewer Panel"])
 
-# Client Upload Page
-if page == "📂 Client Uploads":
-    st.title("📂 Upload Resumes")
-    st.markdown("<p class='big-font'>Upload resumes in PDF format</p>", unsafe_allow_html=True)
-    uploaded_files = st.file_uploader("📂 Upload PDF resumes", type=["pdf"], accept_multiple_files=True)
-    
-    if uploaded_files:
-        st.success("✅ Resumes uploaded successfully!")
-        st.markdown("**Uploaded Files:**")
-        for file in uploaded_files:
-            st.markdown(f"- {file.name}")
+def get_table_download_link(df):
+    """Creates a download link for the ranking results."""
+    csv = df.to_csv(index=False)
+    b64 = base64.b64encode(csv.encode()).decode()
+    return f'<a href="data:file/csv;base64,{b64}" download="resume_rankings.csv">📥 Download Ranking as CSV</a>'
 
-# Interviewer Panel Page
-elif page == "📊 Interviewer Panel":
-    st.title("📊 Resume Ranking System")
-    st.markdown("<p class='big-font'>Filter Candidates</p>", unsafe_allow_html=True)
-    
-    job_role = st.selectbox("🎯 Select Job Role", ["Software Engineer", "Data Scientist", "Project Manager", "UX Designer", "Business Analyst"], index=0)
-    experience_level = st.selectbox("📅 Select Experience Level", ["0-2 years", "2-5 years", "5+ years"], index=0)
-    required_skills = st.multiselect("🔹 Select Required Skills", ["Python", "Machine Learning", "Project Management", "SQL", "UI/UX Design", "Cloud Computing", "Java", "Communication Skills"])
-    
-    if 'uploaded_files' in locals() and uploaded_files:
-        if st.button("🚀 Rank Resumes"):
-            st.info("Processing resumes... Please wait ⏳")
 
-            resumes = []
-            progress_bar = st.progress(0)
+# Streamlit UI
+st.set_page_config(page_title="Smart Resume Analyzer",
+                   page_icon="📑",
+                   layout="wide")
+st.title("📊 AI-Powered Resume Screening & Ranking")
 
-            for i, file in enumerate(uploaded_files):
-                resumes.append(extract_text_from_pdf(file))
-                progress_bar.progress((i + 1) / len(uploaded_files))
-            
-            scores = rank_resumes(job_role, experience_level, required_skills, resumes)
-            
-            ranked_resumes = sorted(zip(uploaded_files, resumes, scores), key=lambda x: x[2], reverse=True)
+uploaded_files = st.file_uploader("📂 Upload Resumes (PDF Only)",
+                                  type=["pdf"],
+                                  accept_multiple_files=True)
 
-            st.success("✅ Ranking completed!")
-            st.subheader("📌 Ranked Resumes")
-            
-            # Styled Markdown Table
-            table_md = "| Rank | Resume Name | Score |\n|------|--------------|-------|\n"
-            
-            for i, (file, resume_text, score) in enumerate(ranked_resumes, start=1):
-                table_md += f"| {i} | {file.name} | {score:.2f} |\n"
-            
-            st.markdown(table_md, unsafe_allow_html=True)
-            
-            # Show top-ranked resume preview
-            if ranked_resumes:
-                st.subheader("🏆 Top Ranked Resume")
-                top_resume_text = extract_text_from_pdf(ranked_resumes[0][0])
-                st.text_area("🔹 Top Resume Content", top_resume_text, height=300)
+if uploaded_files:
+    st.success(f"✔️ {len(uploaded_files)} resumes uploaded successfully!")
+
+    job_roles = [
+        "💻 Software Engineer", "📊 Data Scientist", "📋 Project Manager",
+        "🎨 UI/UX Designer", "☁️ DevOps Engineer"
+    ]
+    job_role = st.selectbox("🏢 Select Job Role", job_roles)
+
+    experience_levels = [
+        "🔰 Entry Level (0-2 years)", "⚡ Mid Level (2-5 years)",
+        "🏆 Senior Level (5+ years)"
+    ]
+    experience = st.selectbox("📅 Select Experience Level", experience_levels)
+
+    skills = [
+        "🐍 Python", "☕ Java", "🤖 Machine Learning", "🧠 Deep Learning",
+        "☁️ Cloud Computing", "🚀 Agile Methodology", "🛢️ SQL", "⚛️ ReactJS",
+        "🐳 Docker"
+    ]
+    required_skills = st.multiselect("🛠️ Select Required Skills", skills)
+
+    if job_role and experience and required_skills:
+        job_description = f"We are looking for a {job_role[2:]} with {experience[2:]} of experience. Required skills include: {', '.join([s[2:] for s in required_skills])}."
+
+        resumes = []
+        candidate_details = []
+        progress_bar = st.progress(0)
+
+        for i, file in enumerate(uploaded_files):
+            resume_text = extract_text_from_pdf(file)
+            resumes.append(resume_text)
+            candidate_details.append(extract_candidate_details(resume_text))
+            progress_bar.progress((i + 1) / len(uploaded_files))
+
+        scores = rank_resumes(job_description, resumes)
+        ranked_resumes = list(
+            zip([d[0] for d in candidate_details],
+                [d[1] for d in candidate_details],
+                [d[2] for d in candidate_details], scores, resumes))
+
+        st.subheader("🏅 Ranked Candidates")
+        ranking_df = pd.DataFrame(ranked_resumes,
+                                  columns=[
+                                      "Candidate Name", "Email",
+                                      "Mobile Number", "Score", "Resume Text"
+                                  ])
+        st.dataframe(
+            ranking_df.drop(columns=["Resume Text"]).sort_values(
+                by="Score", ascending=False))
+        st.markdown(get_table_download_link(
+            ranking_df.drop(columns=["Resume Text"])),
+                    unsafe_allow_html=True)
+
+        # Bar Chart Visualization
+        st.subheader("📊 Candidate Ranking Chart")
+        fig, ax = plt.subplots()
+        sorted_candidates = ranking_df.sort_values(by="Score", ascending=True)
+        ax.barh(sorted_candidates["Candidate Name"],
+                sorted_candidates["Score"],
+                color='skyblue')
+        ax.set_xlabel("Score")
+        ax.set_ylabel("Candidate Name")
+        ax.set_title("Resume Ranking Scores")
+        st.pyplot(fig)
+
+        # Show Top Resume
+        st.subheader("🥇 Top Ranked Candidate")
+        top_candidate = ranking_df.sort_values(by="Score",
+                                               ascending=False).iloc[0]
+        st.markdown(
+            f"**{top_candidate['Candidate Name']}** - {top_candidate['Email']} - {top_candidate['Mobile Number']}"
+        )
+        st.text_area("📜 Top Resume Content",
+                     top_candidate['Resume Text'],
+                     height=300)
