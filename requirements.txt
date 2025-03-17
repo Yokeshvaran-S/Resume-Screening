@@ -1,3 +1,8 @@
 streamlit
-PyPDF2
+nltk
+pandas
+numpy
+matplotlib
 scikit-learn
+PyPDF2
+base64
